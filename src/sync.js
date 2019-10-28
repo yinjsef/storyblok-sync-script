@@ -10,10 +10,13 @@ const Sync = {
     this.client = new StoryblokClient({
       oauthToken: options.token
     }, options.api)
+    this.targetClient = new StoryblokClient({
+      oauthToken: options.targetToken
+    }, options.targetApi)
   },
 
   async syncStories(){
-    var targetFolders = await this.client.getAll(`spaces/${this.targetSpaceId}/stories`, {
+    var targetFolders = await this.targetClient.getAll(`spaces/${this.targetSpaceId}/stories`, {
       folder_only: 1,
       sort_by: 'slug:asc'
     })
@@ -52,7 +55,7 @@ const Sync = {
       sourceStory.parent_id = folderId
 
       try {
-        var existingStory = await this.client.get('spaces/' + this.targetSpaceId + '/stories', {with_slug: all[i].full_slug})
+        var existingStory = await this.targetClient.get('spaces/' + this.targetSpaceId + '/stories', {with_slug: all[i].full_slug})
         var payload = {
           story: sourceStory,
           force_update: '1'
@@ -62,10 +65,10 @@ const Sync = {
         }
 
         if (existingStory.data.stories.length == 1) {
-          var updateResult = await this.client.put('spaces/' + this.targetSpaceId + '/stories/' + existingStory.data.stories[0].id, payload)
+          var updateResult = await this.targetClient.put('spaces/' + this.targetSpaceId + '/stories/' + existingStory.data.stories[0].id, payload)
           console.log('updated ' + existingStory.data.stories[0].full_slug)
         } else {
-          var updateResult = await this.client.post('spaces/' + this.targetSpaceId + '/stories', payload)
+          var updateResult = await this.targetClient.post('spaces/' + this.targetSpaceId + '/stories', payload)
           console.log('created ' + sourceStory.full_slug)
         }
       } catch(e) {
@@ -95,7 +98,7 @@ const Sync = {
           let folderSlug = folder.full_slug.split('/')
           let parentFolderSlug = folderSlug.splice(0, folderSlug.length - 1).join('/')
 
-          let existingFolders = await this.client.get(`spaces/${this.targetSpaceId}/stories`, {
+          let existingFolders = await this.targetClient.get(`spaces/${this.targetSpaceId}/stories`, {
               with_slug: parentFolderSlug
           })
 
@@ -110,7 +113,7 @@ const Sync = {
       }
 
       try {
-        let newFolder = await this.client.post(`spaces/${this.targetSpaceId}/stories`, {
+        let newFolder = await this.targetClient.post(`spaces/${this.targetSpaceId}/stories`, {
           story: folder
         })
 
@@ -129,7 +132,7 @@ const Sync = {
     })
 
     let roles = await this.client.get(`spaces/${this.sourceSpaceId}/space_roles`)
-    let existingRoles = await this.client.get(`spaces/${this.targetSpaceId}/space_roles`)
+    let existingRoles = await this.targetClient.get(`spaces/${this.targetSpaceId}/space_roles`)
 
     for (var i = 0; i < roles.data.space_roles.length; i++) {
       let space_role = roles.data.space_roles[i]
@@ -152,11 +155,11 @@ const Sync = {
         return role.role == space_role.role
       })
       if (existingRole.length) {
-        await this.client.put(`spaces/${this.targetSpaceId}/space_roles/${existingRole[0].id}`, {
+        await this.targetClient.put(`spaces/${this.targetSpaceId}/space_roles/${existingRole[0].id}`, {
           space_role: space_role
         })
       } else {
-        await this.client.post(`spaces/${this.targetSpaceId}/space_roles`, {
+        await this.targetClient.post(`spaces/${this.targetSpaceId}/space_roles`, {
           space_role: space_role
         })
       }
@@ -165,7 +168,7 @@ const Sync = {
   },
 
   async syncComponents() {
-    this.targetComponents = await this.client.get(`spaces/${this.targetSpaceId}/components`)
+    this.targetComponents = await this.targetClient.get(`spaces/${this.targetSpaceId}/components`)
     this.sourceComponents = await this.client.get(`spaces/${this.sourceSpaceId}/components`)
 
     for (var i = 0; i < this.sourceComponents.data.components.length; i++) {
@@ -176,13 +179,13 @@ const Sync = {
 
       // Create new component on target space
       try {
-        await this.client.post(`spaces/${this.targetSpaceId}/components`, {
+        await this.targetClient.post(`spaces/${this.targetSpaceId}/components`, {
           component: component
         })
         console.log(`Component ${component.name} synced`)
       } catch(e) {
         if (e.response.status == 422) {
-          await this.client.put(`spaces/${this.targetSpaceId}/components/${this.getTargetComponentId(component.name)}`, {
+          await this.targetClient.put(`spaces/${this.targetSpaceId}/components/${this.getTargetComponentId(component.name)}`, {
             component: component
           })
           console.log(`Component ${component.name} synced`)
@@ -199,7 +202,78 @@ const Sync = {
     })
 
     return comps[0].id
-  }
+  },
+
+  async syncDatasources() {
+    if (this.sourceSpaceId === this.targetSpaceId) {
+      console.warn('Source space id is same to target space id. No sync required')
+      return
+    }
+    this.targetDatasources = await this.targetClient.get(`spaces/${this.targetSpaceId}/datasources?per_page=1000&page=1`)
+    this.sourceDatasources = await this.client.get(`spaces/${this.sourceSpaceId}/datasources?per_page=1000&page=1`)
+
+    const updateDatasourceEntries = async (sourceDatasource, targetDatasource) => {
+      const sourceDatasourceEntries = await this.client.get(`spaces/${this.sourceSpaceId}/datasource_entries`, {
+        datasource_id: sourceDatasource.id
+      })
+
+      const targetDatasourceEntries = await this.targetClient.get(`spaces/${this.targetSpaceId}/datasource_entries`, {
+        datasource_id: targetDatasource.id
+      })
+      for (let index = 0; index < sourceDatasourceEntries.data.datasource_entries.length; index++) {
+        const sde = sourceDatasourceEntries.data.datasource_entries[index];
+        const tde = targetDatasourceEntries.data.datasource_entries.find(tde => tde.name === sde.name)
+        if (tde) {
+          if (tde.value !== sde.value) {
+            this.targetClient.put(`spaces/${this.targetSpaceId}/datasource_entries/${tde.id}`, {
+              datasource_entry: {
+                ...tde,
+                value: sde.value
+              }
+            })
+          }
+        } else {
+          this.targetClient.post(`spaces/${this.targetSpaceId}/datasource_entries`, {
+            datasource_entry: {
+              ...sde,
+              datasource_id: targetDatasource.id
+            }
+          })
+        }
+      }
+    }
+
+    for (var i = 0; i < this.sourceDatasources.data.datasources.length; i++) {
+      let datasource = this.sourceDatasources.data.datasources[i]
+      
+      // Create new datasource entry on target space
+      try {
+        const response = await this.targetClient.post(`spaces/${this.targetSpaceId}/datasources`, {
+          datasource: datasource
+        })
+        updateDatasourceEntries(datasource, response.data.datasource)
+        console.log(`Datasource ${datasource.name} synced`)
+      } catch(e) {
+        if (e.response.status == 422) {
+          const response = await this.targetClient.put(`spaces/${this.targetSpaceId}/datasources/${this.getTargetDatasourceId(datasource.name)}`, {
+            datasource: datasource
+          })
+          updateDatasourceEntries(datasource, response.data.datasource)
+          console.log(`Datasource ${datasource.name} synced`)
+        } else {
+          console.log(`Datasource ${datasource.name} sync failed`)
+        }
+      }
+    }
+  },
+
+  getTargetDatasourceId(name) {
+    let datasources = this.targetDatasources.data.datasources.filter((datasource) => {
+      return datasource.name == name
+    })
+  
+    return datasources[0].id
+  },
 }
 
 exports.handler = async function (event, context) {
