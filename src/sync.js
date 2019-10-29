@@ -213,11 +213,11 @@ const Sync = {
     this.sourceDatasources = await this.client.get(`spaces/${this.sourceSpaceId}/datasources?per_page=1000&page=1`)
 
     const updateDatasourceEntries = async (sourceDatasource, targetDatasource) => {
-      const sourceDatasourceEntries = await this.client.get(`spaces/${this.sourceSpaceId}/datasource_entries`, {
+      const sourceDatasourceEntries = await this.client.get(`spaces/${this.sourceSpaceId}/datasource_entries?per_page=1000&page=1`, {
         datasource_id: sourceDatasource.id
       })
 
-      const targetDatasourceEntries = await this.targetClient.get(`spaces/${this.targetSpaceId}/datasource_entries`, {
+      const targetDatasourceEntries = await this.targetClient.get(`spaces/${this.targetSpaceId}/datasource_entries?per_page=1000&page=1`, {
         datasource_id: targetDatasource.id
       })
       for (let index = 0; index < sourceDatasourceEntries.data.datasource_entries.length; index++) {
