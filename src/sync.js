@@ -1,4 +1,5 @@
 const StoryblokClient = require('storyblok-js-client')
+const { differenceBy } = require('lodash')
 
 const Sync = {
   targetComponents: [],
@@ -10,9 +11,9 @@ const Sync = {
     this.client = new StoryblokClient({
       oauthToken: options.token
     }, options.api)
-    this.targetClient = new StoryblokClient({
+    this.targetClient = options.targetApi ? new StoryblokClient({
       oauthToken: options.targetToken
-    }, options.targetApi)
+    }, options.targetApi) : this.client
   },
 
   async syncStories(){
@@ -168,14 +169,40 @@ const Sync = {
   },
 
   async syncComponents() {
-    this.targetComponents = await this.targetClient.get(`spaces/${this.targetSpaceId}/components`)
     this.sourceComponents = await this.client.get(`spaces/${this.sourceSpaceId}/components`)
+    this.targetComponents = await this.targetClient.get(`spaces/${this.targetSpaceId}/components`)
+
+    // create missing groups
+    this.sourceGroups = await this.client.get(`spaces/${this.sourceSpaceId}/component_groups`)
+    this.targetGroups = await this.targetClient.get(`spaces/${this.targetSpaceId}/component_groups`)
+    const sourceComponentGroupsData = this.sourceGroups.data.component_groups
+    const targetComponentGroupsData = this.targetGroups.data.component_groups
+    const diffGroups = differenceBy(sourceComponentGroupsData, targetComponentGroupsData, 'name')
+
+    for(const group of diffGroups) {
+      console.log('group.name: ', group.name)
+      const resp = await this.targetClient.post(`spaces/${this.targetSpaceId}/component_groups/`, {
+        "component_group": {
+          "name": group.name
+        }
+      })
+      targetComponentGroupsData.push(resp.data.component_group)
+    }
+    console.log('targetComponentGroupsData: ', targetComponentGroupsData)
 
     for (var i = 0; i < this.sourceComponents.data.components.length; i++) {
       let component = this.sourceComponents.data.components[i]
 
       delete component.id
       delete component.created_at
+
+      // update group uuid
+      if(component.component_group_uuid) {
+        sourceGroup = sourceComponentGroupsData.find(group => group.uuid === component.component_group_uuid)
+        targetGroup = targetComponentGroupsData.find(group => group.name === sourceGroup.name)
+        component.component_group_uuid = targetGroup.uuid
+      }
+
 
       // Create new component on target space
       try {
