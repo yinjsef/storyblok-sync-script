@@ -188,8 +188,7 @@ const Sync = {
       })
       targetComponentGroupsData.push(resp.data.component_group)
     }
-    console.log('targetComponentGroupsData: ', targetComponentGroupsData)
-
+    
     for (var i = 0; i < this.sourceComponents.data.components.length; i++) {
       let component = this.sourceComponents.data.components[i]
 
